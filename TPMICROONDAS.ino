@@ -1,11 +1,10 @@
-#include <Stepper.h>
 #include <Keypad.h>
 #include <LiquidCrystal_I2C.h>
 #include <EEPROM.h>
 
 #define BUZZER_PIN 3
 #define PUERTA_PIN 2
-#define LED_INTERIOR 4
+#define LUZ_INTERIOR 4
 #define MOTOR_PLATO A3
 
 /**************Keypad****************/
@@ -47,8 +46,8 @@ Programa programas[4]; // A, B, C, D
 bool programaActivo = false;
 bool cancelado = false;
 
-
 //funciones
+void menuPrincipal();
 bool puertaAbierta();
 void cargarProgramasPorDefecto();
 int leerNumero();
@@ -57,21 +56,18 @@ void cancelarPrograma();
 void iniciarPrograma(int index);
 void repetirPrograma(int rep);
 
+/*********************************************************************************************/
 void setup() {
   pinMode(BUZZER_PIN, OUTPUT);
   pinMode(PUERTA_PIN, INPUT_PULLUP);
-  pinMode(LED_INTERIOR, OUTPUT);
+  pinMode(LUZ_INTERIOR, OUTPUT);
   pinMode(MOTOR_PLATO, OUTPUT);
 
   lcd.init();
   lcd.backlight();
 
   cargarProgramasPorDefecto();
-
-  lcd.setCursor(0, 0);
-  lcd.print("Listo");
-  delay(1000);
-  lcd.clear();
+  menuPrincipal();
 
   Serial.begin(9600);
 }
@@ -79,13 +75,45 @@ void setup() {
 void loop() {
   //puerta abierta
   if(puertaAbierta() && !programaActivo){
-    digitalWrite(LED_INTERIOR, HIGH);
+    digitalWrite(LUZ_INTERIOR, HIGH);
   }else if(!programaActivo){
-    digitalWrite(LED_INTERIOR, HIGH);
+    digitalWrite(LUZ_INTERIOR, HIGH);
   }
 
   char tecla = kp.getKey();
-  if(tecla){
+  opcionesMenu(tecla);
+
+  //pausar si se abre la puerta
+  while(programaActivo && puertaAbierta()){
+    lcd.clear();
+    lcd.print("Puerta abierta");
+    digitalWrite(MOTOR_PLATO,LOW);
+    digitalWrite(LUZ_INTERIOR,HIGH);
+    noTone(BUZZER_PIN);
+    delay(1000);
+  }
+}
+
+/**************************************MENU PRINCIPAL**************************************************/
+void menuPrincipal(){
+  
+  String texto = "A-Coccion B-Descongelar C-Recalentar D-Usuario #-Configurar ";
+  while(true){
+    lcd.clear();
+    
+    for (int i = 0; i <= texto.length() - 16; i++) {
+      lcd.setCursor(0, 0);
+      lcd.print(texto.substring(i, i + 16));
+      char tecla = kp.getKey();
+      if(tecla){
+        opcionesMenu(tecla);
+      }
+      delay(100); // velocidad del scroll
+    }
+  }
+}
+
+void opcionesMenu(char tecla){
     switch(tecla){
       case 'A':
         iniciarPrograma(0);
@@ -105,7 +133,7 @@ void loop() {
         }
         break;
       case '*':
-        cancelarPrograma();
+      	menuPrincipal();
         break;
       case '1':
         repetirPrograma(1);
@@ -135,25 +163,13 @@ void loop() {
         repetirPrograma(9);
         break;
     }
-  }
-
-  //pausar si se abre la puerta
-  while(programaActivo && puertaAbierta()){
-    lcd.clear();
-    lcd.print("Puerta abierta");
-    digitalWrite(MOTOR_PLATO,LOW);
-    digitalWrite(LUZ_INTERIOR,HIGH);
-    noTone(BUZZER_PIN);
-    delay(1000);
-  }
 }
-
-//verificar puerta
+/*******************************verificar puerta*********************************/
 bool puertaAbierta(){
   return digitalRead(PUERTA_PIN) == LOW; // LOW = la puerta esta abierta
 }
 
-//programas por defecto
+/***********************************programas por defecto****************************************/
 void cargarProgramasPorDefecto() {
   programas[0] = {30, 0, 1}; // A
   programas[1] = {20, 10, 5}; // B
@@ -167,7 +183,7 @@ void cargarProgramasPorDefecto() {
   }
 }
 
-//permitir ingresar multiples digitos
+/****************************permitir ingresar multiples digitos********************************/
 int leerNumero(){
   String num = "";
   while(true){
@@ -177,17 +193,18 @@ int leerNumero(){
       num += t;
       lcd.setCursor(0,1);
       lcd.print(num);
-    }else if(t == '*')return -1;//cancelar
+    }else if(t == '*')menuPrincipal();//cancelar
   }
   return num.toInt();
 }
 
-//configurar programa(tecla D)
+/*****************************configurar programa(tecla D)**************************************/
 void configurarPrograma(){
+  
   lcd.clear();
   lcd.print("tiempo calentar:");
   int calentar = leerNumero();
-
+  
   lcd.clear();
   lcd.print("tiempo apagado");
   int apagado = leerNumero();
@@ -195,7 +212,7 @@ void configurarPrograma(){
   lcd.clear();
   lcd.print("repeticiones");
   int repeticiones = leerNumero();
-
+  
   programas[3] = {calentar,apagado,repeticiones};
   EEPROM.put(0,programas[3]);
 
@@ -204,7 +221,13 @@ void configurarPrograma(){
   delay(1000);
 }
 
-//cancelar programa
+/*********************cancelar programa*****************************/
+void volverAlMenu(){
+  char tecla = kp.getKey();
+  if(tecla == '*'){
+    menuPrincipal();
+  }
+}
 void cancelarPrograma(){
   cancelado = true;
   programaActivo = false;
@@ -213,9 +236,18 @@ void cancelarPrograma(){
   digitalWrite(LUZ_INTERIOR, LOW);
   lcd.clear();
   lcd.print("Cancelado");
-  delay(1000);
+  delay(3000);
+  menuPrincipal();
 }
-//ejecutar programa
+void verificarCancelacion(){
+  char tecla = kp.getKey();
+  if(tecla){
+    if(tecla == '*'){
+      cancelarPrograma();
+    }
+  }
+}
+/************************************ejecutar programa****************************************************/
 void iniciarPrograma(int index){
   if(puertaAbierta()){
     lcd.clear();
@@ -223,30 +255,57 @@ void iniciarPrograma(int index){
     delay(2000);
     return;
   }
-
+  
   Programa p = programas[index];
   int tiempoTotal = (p.calentar + p.apagado) * p.repeticiones;
   programaActivo = true;
   cancelado = false;
-
-  for(int r = 0; r <p.repeticiones && !cancelado; r++){
+  int r = 0;
+  lcd.clear();
+  lcd.setCursor(0,0);
+  switch(index){
+    case 0:
+    lcd.print("Coccion Rapida");
+    break;
+    case 1:
+    lcd.print("Descongelar");
+    break;
+    case 2:
+    lcd.print("Recalentar");
+    break;
+    case 3:
+    lcd.print("Personalizada");
+    break;
+  }
+  while(r <p.repeticiones && !cancelado){
+    int i = 0;
     //calentar
-    lcd.clear();
-    lcd.print("Calentando...");
     digitalWrite(LUZ_INTERIOR, HIGH);
     digitalWrite(MOTOR_PLATO, HIGH);
-    tone(BUZZER_PIN, 500);
-    for (int i = 0; i < p.calentar && !puertaAbierta() && !cancelado; i++) {
+    tone(BUZZER_PIN, 300);
+    while(i < p.calentar && !puertaAbierta() && !cancelado) {
+      verificarCancelacion();
+      lcd.setCursor(0,1);
+      lcd.print(tiempoTotal);
+      lcd.print(" seg");
+      tiempoTotal--;
       delay(1000);
+      i++;
     }
     //apagado
-    lcd.clear();
-    lcd.print("En pausa...");
+    i = 0;
     digitalWrite(MOTOR_PLATO, LOW);
-    tone(BUZZER_PIN, 300);
-    for (int i = 0; i < p.apagado && !puertaAbierta() && !cancelado; i++) {
+    tone(BUZZER_PIN, 100);
+    while(i < p.apagado && !puertaAbierta() && !cancelado) {
+      verificarCancelacion();
+      lcd.setCursor(0,1);
+      lcd.print(tiempoTotal);
+      lcd.print(" seg");
+      tiempoTotal--;
       delay(1000);
+      i++;
     }
+    r++;
   }
   
   noTone(BUZZER_PIN);
@@ -257,17 +316,12 @@ void iniciarPrograma(int index){
     lcd.clear();
     lcd.print("Listo");
     tone(BUZZER_PIN, 2000, 1000);
-    delay(1000);
+    delay(3000);
   }
-
   programaActivo = false;
 }
-//repeticiones de coccion rapida
+/******************************repeticiones de coccion rapida***********************************/
 void repetirPrograma(int rep){
-  programas[0].repeticiones = rep;// modifico la cantidad de repeticiones de coccion rapida
-  iniciarPrograma(0);// inicio la coccion rapida modificada
+  programas[0].repeticiones = rep;// modifico la cantidad de repeticiones 
+  iniciarPrograma(0);
 }
-
-
-
-
